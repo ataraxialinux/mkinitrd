@@ -1,157 +1,91 @@
-#!/bin/bash
-#
-# Initrd generator for Ataraxia Linux.
-#
+#!/usr/bin/env bash
 
-RELEASE="20190303"
-
-msg() {
-	local msg=$(echo $1 | tr -s / /)
-	printf "\e[1m\e[32m==>\e[0m $msg\n"
-}
-
-die() {
-	local msg=$(echo $1 | tr -s / /)
-	printf "\e[1m\e[31m==!\e[0m $msg\n"
-	exit 1
-}
+msg() { printf "\033[1;34m::\033[0m %s\n" "$@"; }
+die() { printf "\033[1;31m::\033[0m %s\n" "$@"; exit 1; }
 
 copylib() {
-	local file="$1"
-
-	for internalfile in "$file"; do
-		my="$(ldd $internalfile | awk '{print $1}' | sed -e "s,/lib/,,g")"
-		for my2 in $my; do
-			cp /usr/lib/$my2 usr/lib/
+	for i in $1; do
+		j="$(${CROSS_COMPILE}objdump -p "$ROOTFS/$i" | grep NEEDED | awk '{print $2}')"
+		ld="$(${CROSS_COMPILE}readelf -l "$ROOTFS/$i" | grep Requesting | awk '{print $4}' | cut -d':' -f2 | tr -d ' ]' | sed -e 's|/lib/||')"
+		for ji in $j; do
+			if [ ! -f "$TMPDIR/usr/lib/$ji" ]; then
+				cp "$ROOTFS/usr/lib/$ji" "$TMPDIR"/usr/lib/$ji
+			fi
+			ln -sf libc.so "$TMPDIR"/usr/lib/$ld
 		done
 	done
 }
 
-usage() {
-	cat <<EOF
-mkinitrd $RELEASE - Initrd generator for Ataraxia Linux
+main() {
+	local sharedbins="cat cp dd ls mkdir mknod mount umount sed sleep ln rm uname readlink basename blkid switch_root kmod udevd udevadm"
+	local staticbins="mksh busybox"
+	local busyboxlinks="killall"
+	local kmodlinks="insmod lsmod rmmod depmod modprobe modinfo"
+	local kver="$(uname -r)"
 
-Usage:	$(basename $0) [options]
+	msg "Creating initramfs image for $kver"
+	TMPDIR="$(mktemp -d)"
 
-	--kernel=[version|auto]		Specify kernel version to work with
-	--modules=[path|auto]	Specify modules place
-	--data=[path|auto]	Specify data plcae of mkinitrd
-	--usage				Show this message
+	cd "$TMPDIR"
+	mkdir -p usr/bin usr/lib usr/lib/firmware usr/lib/modules/$kver/kernel/drivers/usb dev proc sys tmp run etc/modprobe.d etc/udev/rules.d
 
-EOF
-	exit 0
+	ln -sf usr/bin bin
+	ln -sf usr/lib lib
+	ln -sf bin usr/sbin
+
+	if [ -f "$ROOTFS/etc/udev/udev.conf" ]; then
+		cp "$ROOTFS"/etc/udev/udev.conf "$TMPDIR"/etc/udev/udev.conf
+	fi
+
+	for file in $(find "$ROOTFS/etc/udev/rules.d/" -type f) ; do
+		cp $file "$TMPDIR"/etc/udev/rules.d
+	done
+
+	for i in $sharedbins; do
+		cp "$ROOTFS"/usr/bin/$i "$TMPDIR"/usr/bin/$i
+		copylib /usr/bin/$i
+	done
+
+	for i in $staticbins; do
+		cp "$ROOTFS"/usr/bin/$i "$TMPDIR"/usr/bin/$i
+	done
+
+	for i in $busyboxlinks; do
+		ln -sf busybox "$TMPDIR"/usr/bin/$i
+	done
+
+	for i in $kmodlinks; do
+		ln -sf kmod "$TMPDIR"/usr/bin/$i
+	done
+
+	ln -sf mksh "$TMPDIR"/usr/bin/sh
+
+	for kmoddir in crypto fs lib; do
+		if [ -d "$ROOTFS/usr/lib/modules/$kver/kernel/$kmoddir" ]; then
+			cp -R "$ROOTFS"/usr/lib/modules/$kver/kernel/$kmoddir "$TMPDIR"/usr/lib/modules/$kver/kernel
+		fi
+	done
+
+	for kmoddir in block ata md firewire scsi message pcmcia virtio thunderbolt; do
+		if [ -d "$ROOTFS/usr/lib/modules/$kver/kernel/drivers/$kmoddir" ]; then
+			cp -R "$ROOTFS"/usr/lib/modules/$kver/kernel/drivers/$kmoddir "$TMPDIR"/usr/lib/modules/$kver/kernel/drivers
+		fi
+	done
+
+	for kmoddir in host storage; do
+		if [ -d "$ROOTFS/usr/lib/modules/$kver/kernel/drivers/usb/$kmoddir" ]; then
+			cp -R "$ROOTFS"/usr/lib/modules/$kver/kernel/drivers/usb/$kmoddir "$TMPDIR"/usr/lib/modules/$kver/kernel/drivers/usb
+		fi
+	done
+
+	if [ -d "$MODULES" ]; then
+		depmod -a -b "$TMPDIR"/usr $kver
+	fi
+
+	msg "Done"
 }
 
-for arg in "$@";do
-	case "$arg" in
-		--kernel=*) KERNEL="${arg#*=}";;
-		--modules=*) MODULES="${arg#*=}";;
-		--data=*) DATA="${arg#*=}";;
-        --usage) usage ;;
-    esac
-done
-
-[ -z "$KERNEL" ] && KERNEL="$(uname -r)"
-[ -z "$MODULES" ] && MODULES="/lib/modules/$KERNEL"
-[ -z "$DATA" ] && DATA="/usr/share/mkinitrd"
-
-IMAGE="/boot/initramfs-$KERNEL.img"
-
-echo "Building initramfs image for $KERNEL"
-
-TMPDIR="$(mktemp -d)"
-cd "$TMPDIR"
-
-mkdir -p usr/bin usr/lib usr/lib/firmware usr/lib/modules/$KERNEL/kernel/drivers/usb dev proc sys tmp run etc/modprobe.d
-
-ln -sf usr/bin bin
-ln -sf usr/lib lib
-ln -sf bin usr/sbin
-
-for kmoddir in crypto fs lib; do
-	if [ -d "$MODULES"/kernel/$kmoddir ]; then
-		cp -a "$MODULES/kernel/$kmoddir" usr/lib/modules/$KERNEL/kernel
-	fi
-done
-
-for kmoddir in block ata md firewire scsi message pcmcia virtio; do
-	if [ -d "$MODULES"/kernel/drivers/$kmoddir ]; then
-		cp -a "$MODULES/kernel/drivers/$kmoddir" usr/lib/modules/$KERNEL/kernel/drivers
-	fi
-done
-
-for kmoddir in host storage; do
-	if [ -d "$MODULES"/kernel/drivers/usb/$kmoddir ]; then
-		cp -a "$MODULES/kernel/drivers/usb/$kmoddir" usr/lib/modules/$KERNEL/kernel/drivers/usb
-	fi
-done
-
-if [ -d "$MODULES" ]; then
-	depmod -b "$TMPDIR" $KERNEL
-fi
-
-touch /etc/modprobe.d/modprobe.conf
-
-mkdir -p usr/lib/udev/rules.d etc/udev
-
-if [ -f /etc/udev/udev.conf ]; then
-	cp /etc/udev/udev.conf etc/udev/udev.conf
-fi
-
-for file in "$(find /usr/lib/udev/rules.d/ -type f)"; do
-	cp $file usr/lib/udev/rules.d
-done
-
-ln -sf /usr/lib/udev/rules.d etc/udev/rules.d
-
-for bins in busybox /bash kmod udevd udevadm blkid switch_root mount umount; do
-	cp /usr/bin/$bins usr/bin/
-done
-
-for app in bash kmod udevd udevadm busybox blkid switch_root mount umount; do
-	copylib /usr/bin/$app
-done
-
-ln -sf bash usr/bin/sh
-
-for kmod in {ins,ls,rm,dep}mod mod{probe,info}; do
-	ln -sf kmod usr/bin/$kmod
-done
-
-if [ -f /usr/bin/lvm ]; then
-
-	cp /usr/bin/lvm usr/bin/
-
-	copylib /usr/bin/lvm
-
-	for lvm in lvchange lvrename lvextend lvcreate lvdisplay lvscan pvchange pvck pvcreate pvdisplay pvscan vgchange vgcreate vgscan vgrename vgck; do
-		ln -sf lvm usr/bin/$lvm
-	done
-
-	cp -a /etc/lvm etc
-fi
-
-if [ -f /usr/bin/mdadm ]; then
-	cp /usr/bin/mdadm usr/bin/
-	cp /usr/bin/mdmon usr/bin/
-
-	for app in mdadm mdmon; do
-		copylib /usr/bin/$app
-	done
-
-	cp /etc/mdadm.conf etc
-fi
-
-for userland in cat cp dd killall ls mkdir mknod sed sleep ln rm uname readlink basename find awk xargs tr cut uniq sort grep touch sed ash killall; do
-	ln -sf busybox usr/bin/$userland
-done
-
-install -m755 "$DATA"/init init
-
-find . | cpio -H newc -o | pigz > "$IMAGE"
-
-echo "Done."
+main
 
 exit 0
-
 
