@@ -1,3 +1,3 @@
 # mkinitrd
 
-initrd creation program for januslinux
+initrd creation program for Ataraxia Linux
