@@ -5,15 +5,15 @@ export PATH="/usr/bin"
 no_mount() {
 	printf "Could not mount device %s\n" $1
 	printf "Sleeping forever. Please reboot and fix the kernel command line.\n\n"
-	printf "Maybe the device is formatted with an unsupported file system?\n\n"
+	printf "Maybe the device is formatted with an unsnewrootported file system?\n\n"
 	printf "Or maybe filesystem type autodetection went wrong, in which case\n"
 	printf "you should add the rootfstype=... parameter to the kernel command line.\n\n"
 	printf "Available partitions:\n"
 
-	exec /bin/ash
+	exec /usr/bin/mksh
 }
 
-init="/sbin/init"
+init="/usr/bin/init"
 root=""
 state="ro"
 
@@ -40,7 +40,8 @@ for arg in $(cat /proc/cmdline);do
 		init=*) init="${arg#*=}" ;;
 		root=*) root="${arg#*=}" ;;
 		ro|rw) state="${arg}" ;;
-		shell) exec /bin/ash ;;
+		live) live=1 ;;
+		shell) exec /usr/bin/mksh ;;
 	esac
 done
 
@@ -50,19 +51,27 @@ case "$root" in
 		LABEL=*) device="/dev/disk/by-label/${root#*=}" ;;
 esac
 
-if [ -f /etc/mdadm.conf ]; then
-	mdadm -As
-fi
+if [ "$live" != "1" ]; then
+	if [ -f /etc/mdadm.conf ]; then
+		mdadm -As
+	fi
 
-if [ -f /usr/bin/vgchange ]; then
-	vgchange -a y > /dev/null
-fi
+	if [ -f /usr/bin/vgchange ]; then
+		vgchange -a y > /dev/null
+	fi
 
-rootoptions=$(grep "$root" /etc/fstab | cut -f4)
-mount -o "$state,$rootoptions" "$device" /newroot || no_mount
+	rootoptions=$(grep "$root" /etc/fstab | cut -f4)
+	mount -o "$state,$rootoptions" "$device" /newroot || no_mount
+else
+	mkdir -p /newroot/media /newroot/squash /newroot/rw /newroot/workdir /newroot/union
+
+	mount "$device" /newroot/media || no_mount
+	mount -o loop -t squashfs /newroot/media/seiba/seiba.sfs /newroot/squash
+	mount -o lowerdir=/newroot/squash,upperdir=/newroot/rw,workdir=/newroot/workdir -t overlay overlay /newroot/union
+fi
 
 for move in /proc /sys /dev; do
-    mount --move $move /newroot/$move || no_mount
+	mount --move $move /newroot/$move || no_mount
 done
 
 if [ -e "/proc/sys/kernel/hotplug" ];then
@@ -72,6 +81,6 @@ fi
 killall -w udevd
 
 # welcome
-exec switch_root /newroot "$init" "$@" || exec /bin/ash
+exec switch_root /newroot "$init" "$@" || exec /usr/bin/mksh
 
-exec /bin/ash
+exec /usr/bin/mksh

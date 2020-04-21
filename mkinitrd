@@ -21,9 +21,10 @@ main() {
 	local staticbins="mksh busybox"
 	local busyboxlinks="killall"
 	local kmodlinks="insmod lsmod rmmod depmod modprobe modinfo"
-	local kver="$(uname -r)"
+	[ -z "$kver" ] && local kver="$(uname -r)"
 
 	msg "Creating initramfs image for $kver"
+	TOPDIR="$PWD"
 	TMPDIR="$(mktemp -d)"
 
 	cd "$TMPDIR"
@@ -81,6 +82,12 @@ main() {
 	if [ -d "$MODULES" ]; then
 		depmod -a -b "$TMPDIR"/usr $kver
 	fi
+
+	install -m755 "$TOPDIR"/init "$TMPDIR"/init
+
+	pushd "$TMPDIR"
+		find . | gcpio -H newc -o | zstd -12 > "$TOPDIR"/seiba.zst
+	popd
 
 	msg "Done"
 }
