@@ -17,9 +17,9 @@ copylib() {
 }
 
 main() {
-	local sharedbins="cat cp dd ls mkdir mknod mount umount sed sleep ln rm uname readlink basename blkid switch_root kmod udevd udevadm"
-	local staticbins="mksh busybox"
-	local busyboxlinks="killall"
+	local sharedbins="cat cp dd ls mkdir mknod mount umount sed sleep ln rm uname readlink basename blkid switch_root kmod udevd udevadm clear dmesg halt grep"
+	local staticbins="mksh busybox ctrlaltdel"
+	local busyboxlinks="cttyhack killall"
 	local kmodlinks="insmod lsmod rmmod depmod modprobe modinfo"
 	[ -z "$kver" ] && local kver="$(uname -r)"
 
