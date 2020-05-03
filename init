@@ -27,7 +27,7 @@ mount -t sysfs sys /sys -o nosuid,noexec,nodev || rescue_shell
 mount -t tmpfs run /run -o mode=0755,nosuid,nodev || rescue_shell
 mount -t devtmpfs dev /dev -o mode=0755,nosuid || rescue_shell
 mount -t tmpfs tmpfs -o rw,size=100% /newroot || rescue_shell
-mkdir -p /dev/pts /dev/shm /newroot/cdrom /newroot/squash /newroot/rw /newroot/work /newroot/system || rescue_shell
+mkdir -p /run/lvm /dev/pts /dev/shm /newroot/cdrom /newroot/squash /newroot/rw /newroot/work /newroot/system || rescue_shell
 mount -t devpts devpts /dev/pts -o mode=0620,gid=5,nosuid,noexec || rescue_shell
 mount -t tmpfs shm /dev/shm -o mode=1777,nosuid,nodev || rescue_shell
 
@@ -35,12 +35,20 @@ mount -t tmpfs shm /dev/shm -o mode=1777,nosuid,nodev || rescue_shell
 live="0"
 [ -n "$(grep -oh "live" /proc/cmdline )" ] && live="1"
 
+msg "Updating kernel modules"
+depmod -a >/dev/null 2>&1
+
 msg "Starting udev"
 udevd --daemon || rescue_shell
 udevadm trigger --action=add --type=subsystems || rescue_shell
 udevadm trigger --action=add --type=devices || rescue_shell
 udevadm trigger --action=change --type=devices || rescue_shell
 udevadm settle || rescue_shell
+
+msg "Scanning for volume groups..."
+modprobe dm-mod
+vgscan --mknodes --ignorelockingfailure >/dev/null 2>&1 || rescue_shell
+vgchange --sysinit --activate y >/dev/null 2>&1 || rescue_shell
 
 if [ "$live" = "1" ]; then
 	msg "Mounting live media"

@@ -17,10 +17,11 @@ copylib() {
 }
 
 main() {
-	local sharedbins="cat cp dd ls mkdir mknod mount umount sed sleep ln rm uname readlink basename blkid switch_root kmod udevd udevadm clear dmesg grep printf setsid"
+	local sharedbins="cat cp dd ls mkdir mknod mount umount sed sleep ln rm uname readlink basename blkid switch_root kmod udevd udevadm clear dmesg grep printf setsid lvm dmsetup"
 	local staticbins="mksh busybox ctrlaltdel halt"
 	local busyboxlinks="cttyhack killall"
 	local kmodlinks="insmod lsmod rmmod depmod modprobe modinfo"
+	local lvmlinks="lvchange lvrename lvextend lvcreate lvdisplay lvscan pvchange pvck pvcreate pvdisplay pvscan vgchange vgcreate vgscan vgrename vgck"
 	[ -z "$kver" ] && local kver="$(uname -r)"
 
 	msg "Creating initramfs image for $kver"
@@ -34,13 +35,12 @@ main() {
 	ln -sf usr/lib lib
 	ln -sf bin usr/sbin
 
+	cp -a "$ROOTFS"/usr/lib/udev "$TMPDIR"/usr/lib/udev
+	ln -sf /usr/lib/udev "$TMPDIR"/etc/udev
 	if [ -f "$ROOTFS/etc/udev/udev.conf" ]; then
 		cp "$ROOTFS"/etc/udev/udev.conf "$TMPDIR"/etc/udev/udev.conf
 	fi
-
-	for file in $(find "$ROOTFS/etc/udev/rules.d/" -type f) ; do
-		cp $file "$TMPDIR"/etc/udev/rules.d
-	done
+	cp -a "$ROOTFS"/etc/lvm "$TMPDIR"/etc
 
 	for i in $sharedbins; do
 		cp "$ROOTFS"/usr/bin/$i "$TMPDIR"/usr/bin/$i
@@ -57,6 +57,10 @@ main() {
 
 	for i in $kmodlinks; do
 		ln -sf kmod "$TMPDIR"/usr/bin/$i
+	done
+
+	for i in $lvmlinks; do
+		ln -sf lvm "$TMPDIR"/usr/bin/$i
 	done
 
 	ln -sf mksh "$TMPDIR"/usr/bin/sh
