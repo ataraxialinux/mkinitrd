@@ -1,11 +1,13 @@
-#!/bin/sh
+#!/usr/bin/sh
 #
 # Thanks to Dragora for some help
 #
 
 export PATH="/usr/bin"
 
-msg() { printf "\033[1;34m==>\033[0m \033[1;36m%s\n\033[0m" "$@"; }
+msg() {
+	printf "\033[1;34m==>\033[0m \033[1;36m%s\n\033[0m" "$@"
+}
 
 rescue_shell() {
 	msg "Error occurred! Dropping in rescue shell..."
@@ -25,7 +27,7 @@ mount -t sysfs sys /sys -o nosuid,noexec,nodev || rescue_shell
 mount -t tmpfs run /run -o mode=0755,nosuid,nodev || rescue_shell
 mount -t devtmpfs dev /dev -o mode=0755,nosuid || rescue_shell
 mount -t tmpfs tmpfs -o rw,size=100% /newroot || rescue_shell
-mkdir -p -m0755 /dev/pts /dev/shm /newroot/cdrom /newroot/squash /newroot/rw /newroot/work /newroot/system || rescue_shell
+mkdir -p /dev/pts /dev/shm /newroot/cdrom /newroot/squash /newroot/rw /newroot/work /newroot/system || rescue_shell
 mount -t devpts devpts /dev/pts -o mode=0620,gid=5,nosuid,noexec || rescue_shell
 mount -t tmpfs shm /dev/shm -o mode=1777,nosuid,nodev || rescue_shell
 
@@ -51,7 +53,7 @@ if [ "$live" = "1" ]; then
 	mount -n -r -o loop -t squashfs /newroot/cdrom/seiba/seiba.sfs /newroot/squash || rescue_shell
 
 	msg "Merging live media"
-	mount -n -o lowerdir=/newroot/squash,upperdir=/newroot/rw,workdir=/newroot/workdir -t overlay overlay /newroot/system || rescue_shell
+	mount -n -o lowerdir=/newroot/squash,upperdir=/newroot/rw,workdir=/newroot/work -t overlay overlay /newroot/system || rescue_shell
 else
 	rescue_shell
 fi
