@@ -1,6 +1,6 @@
 #!/usr/bin/sh
 #
-# Thanks to Dragora for some help
+# Thanks to Dragora for some help, for more information visit https://dragora.org/
 #
 
 export PATH="/usr/bin"
