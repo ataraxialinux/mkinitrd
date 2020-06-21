@@ -88,9 +88,12 @@ main() {
 	fi
 
 	install -m755 "$TOPDIR"/init "$TMPDIR"/init
+	
+	[ "" == "$CPIO_TYPE" ] && CPIO_NAME="zstd"
+	[ "" == "$CPIO_PARAM" ] && CPIO_PARAM="-12"
 
 	pushd "$TMPDIR"
-		find . | gcpio -H newc -o | zstd -12 > "$TOPDIR"/seiba.zst
+		find . | gcpio -H newc -o | ${CPIO_TYPE} ${CPIO_PARAM} > "$TOPDIR"/seiba.${CPIO_TYPE}
 	popd
 
 	msg "Done"

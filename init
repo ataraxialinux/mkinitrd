@@ -18,6 +18,18 @@ rescue_shell() {
 	halt -r
 }
 
+is_file_avaiable(){
+    disktmp=$(mktemp)
+    rm -f $disktmp
+    mkdir -p $disktmp || true
+    timeout 10 mount -t auto "$1" $disktmp &>/dev/null
+    [ -f "$disktmp/$2" ] && [ -b "$1" ]
+    status=$?
+    umount -lf $disktmp 2>/dev/null
+    return $status
+}
+
+
 dmesg -n 1
 mkdir -p /dev /proc /sys /run /newroot
 
@@ -50,15 +62,26 @@ modprobe dm-mod
 vgscan --mknodes --ignorelockingfailure >/dev/null 2>&1 || rescue_shell
 vgchange --sysinit --activate y >/dev/null 2>&1 || rescue_shell
 
+msg "Scanning for live media detection..."
+sfs="seiba/seiba.sfs"
+while [ "$live" = "1" ] && [ "$root" == "" ] ; do
+	list=$(ls /sys/class/block/ | grep ".*[0-9]$" | grep -v loop | grep -v ram | grep -v nbd | sed "s|^|/dev/|g")
+	for part in $list
+	do
+		sleep 0.1
+		if is_file_avaiable "$part" "${sfs}"
+		then
+			msg "Detected live media $part"
+			export root=$part
+		fi
+	done
+done
+
+
 if [ "$live" = "1" ]; then
 	msg "Mounting live media"
-	mount -n -r -t iso9660 LABEL="ataraxialinux" /newroot/cdrom || \
-	{
-		sleep 3
-		mount -n -r /dev/disk/by-label/ataraxialinux /newroot/cdrom || rescue_shell
-	}
- 
-	mount -n -r -o loop -t squashfs /newroot/cdrom/seiba/seiba.sfs /newroot/squash || rescue_shell
+	mount -t auto $root /newroot/cdrom || rescue_shell
+	mount -n -r -o loop -t squashfs /newroot/cdrom/${sfs} /newroot/squash || rescue_shell
 
 	msg "Merging live media"
 	mount -n -o lowerdir=/newroot/squash,upperdir=/newroot/rw,workdir=/newroot/work -t overlay overlay /newroot/system || rescue_shell
@@ -76,4 +99,6 @@ mount --move /sys /newroot/system/sys || rescue_shell
 mount --move /run /newroot/system/run || rescue_shell
 
 msg "Hi!"
-exec switch_root /newroot/system /usr/bin/init || rescue_shell
+exec env -i \
+	"TERM=linux" \
+        switch_root /newroot/system /usr/bin/init || rescue_shell
