@@ -52,11 +52,7 @@ vgchange --sysinit --activate y >/dev/null 2>&1 || rescue_shell
 
 if [ "$live" = "1" ]; then
 	msg "Mounting live media"
-	mount -n -r -t iso9660 LABEL="ataraxialinux" /newroot/cdrom || \
-	{
-		sleep 3
-		mount -n -r /dev/disk/by-label/ataraxialinux /newroot/cdrom || rescue_shell
-	}
+	mount -n -r /dev/disk/by-label/ataraxialinux /newroot/cdrom || rescue_shell
  
 	mount -n -r -o loop -t squashfs /newroot/cdrom/seiba/seiba.sfs /newroot/squash || rescue_shell
 
