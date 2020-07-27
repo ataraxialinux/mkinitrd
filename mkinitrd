@@ -17,9 +17,9 @@ copylib() {
 }
 
 main() {
-	local sharedbins="cat cp dd ls mkdir mknod mount umount sed sleep ln rm uname readlink basename blkid switch_root kmod udevd udevadm clear dmesg grep printf setsid lvm dmsetup"
-	local staticbins="mksh busybox ctrlaltdel halt"
-	local busyboxlinks="cttyhack killall"
+	local sharedbins="cat cp dd ls mkdir mknod mount umount sed sleep ln rm uname readlink basename blkid switch_root kmod udevd udevadm clear dmesg grep printf setsid lvm dmsetup toybox"
+	local staticbins="mksh ctrlaltdel halt"
+	local busyboxlinks="killall"
 	local kmodlinks="insmod lsmod rmmod depmod modprobe modinfo"
 	local lvmlinks="lvchange lvrename lvextend lvcreate lvdisplay lvscan pvchange pvck pvcreate pvdisplay pvscan vgchange vgcreate vgscan vgrename vgck"
 	[ -z "$kver" ] && local kver="$(uname -r)"
@@ -90,7 +90,7 @@ main() {
 	install -m755 "$TOPDIR"/init "$TMPDIR"/init
 
 	pushd "$TMPDIR"
-		find . | gcpio -H newc -o | zstd -12 > "$TOPDIR"/seiba.zst
+		find . | cpio -H newc -o | zstd -12 > "$TOPDIR"/seiba.zst
 	popd
 
 	msg "Done"
