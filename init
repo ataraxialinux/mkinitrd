@@ -10,7 +10,7 @@ msg() { printf "live-init: %s\n" >> /dev/kmsg "$@"; }
 rescue_shell() {
 	msg "Error occurred! Dropping in rescue shell..."
 	export PS1="[\e[0;31mRESCUE SHELL\e[m] $ "
-	setsid cttyhack /usr/bin/mksh
+	sulogin -p
 	msg "Rebooting."
 	sleep 1
 	halt -r
@@ -31,7 +31,6 @@ mount -t tmpfs shm /dev/shm -o mode=1777,nosuid,nodev || rescue_shell
 
 
 live="0"
-[ -n "$(grep -oh "live" /proc/cmdline )" ] && live="1"
 
 msg "Updating kernel modules"
 depmod -a >/dev/null 2>&1
@@ -43,26 +42,17 @@ udevadm trigger --action=add --type=devices || rescue_shell
 udevadm trigger --action=change --type=devices || rescue_shell
 udevadm settle || rescue_shell
 
-msg "Scanning for volume groups..."
-modprobe dm-mod
-vgscan --mknodes --ignorelockingfailure >/dev/null 2>&1 || rescue_shell
-vgchange --sysinit --activate y >/dev/null 2>&1 || rescue_shell
+msg "Mounting live media"
+mount -n -r -t iso9660 LABEL="ataraxialinux" /newroot/cdrom || \
+{
+	sleep 3
+	mount -n -r /dev/disk/by-label/ataraxialinux /newroot/cdrom || rescue_shell
+}
 
-if [ "$live" = "1" ]; then
-	msg "Mounting live media"
-	mount -n -r -t iso9660 LABEL="ataraxialinux" /newroot/cdrom || \
-	{
-		sleep 3
-		mount -n -r /dev/disk/by-label/ataraxialinux /newroot/cdrom || rescue_shell
-	}l
- 
-	mount -n -r -o loop -t squashfs /newroot/cdrom/seiba/seiba.sfs /newroot/squash || rescue_shell
+mount -n -r -o loop -t squashfs /newroot/cdrom/seiba/seiba.sfs /newroot/squash || rescue_shell
 
-	msg "Merging live media"
-	mount -n -o lowerdir=/newroot/squash,upperdir=/newroot/rw,workdir=/newroot/work -t overlay overlay /newroot/system || rescue_shell
-else
-	rescue_shell
-fi
+msg "Merging live media"
+mount -n -o lowerdir=/newroot/squash,upperdir=/newroot/rw,workdir=/newroot/work -t overlay overlay /newroot/system || rescue_shell
 
 msg "Stopping udev"
 udevadm control --exit
@@ -73,5 +63,5 @@ mount --move /proc /newroot/system/proc || rescue_shell
 mount --move /sys /newroot/system/sys || rescue_shell
 mount --move /run /newroot/system/run || rescue_shell
 
-msg "Hi!"
+msg "Switching root"
 exec switch_root /newroot/system /usr/bin/init || rescue_shell

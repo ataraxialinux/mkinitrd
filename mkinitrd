@@ -17,7 +17,7 @@ copylib() {
 }
 
 main() {
-	local sharedbins="cat cp dd ls mkdir mknod mount umount sed sleep ln rm uname readlink basename blkid switch_root kmod udevd udevadm clear dmesg grep printf setsid lvm dmsetup toybox"
+	local sharedbins="cat cp dd ls mkdir mknod mount umount sed sleep ln rm uname readlink basename blkid switch_root kmod udevd udevadm clear dmesg grep printf setsid lvm dmsetup toybox sulogin"
 	local staticbins="mksh ctrlaltdel halt"
 	local busyboxlinks="killall"
 	local kmodlinks="insmod lsmod rmmod depmod modprobe modinfo"
