@@ -43,7 +43,7 @@ udevadm trigger --action=change --type=devices || rescue_shell
 udevadm settle || rescue_shell
 
 msg "Mounting live media"
-mount -n -r -t iso9660 LABEL="ataraxialinux" /newroot/cdrom || \
+mount -n -r -t iso9660 -L ataraxialinux /newroot/cdrom || \
 {
 	sleep 3
 	mount -n -r /dev/disk/by-label/ataraxialinux /newroot/cdrom || rescue_shell
@@ -62,6 +62,7 @@ mount --move /dev /newroot/system/dev || rescue_shell
 mount --move /proc /newroot/system/proc || rescue_shell
 mount --move /sys /newroot/system/sys || rescue_shell
 mount --move /run /newroot/system/run || rescue_shell
+mount --move /newroot/cdrom /newroot/system/media/cdrom || rescue_shell
 
 msg "Switching root"
 exec switch_root /newroot/system /usr/bin/init || rescue_shell
