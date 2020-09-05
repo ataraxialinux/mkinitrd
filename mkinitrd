@@ -295,41 +295,6 @@ main() {
 		/usr/lib/systemd/systemd-volatile-root \
 		/usr/lib/systemd/systemd-sulogin-shell
 
-	echo 'd /run/live-os 0755 root root -' >> "$tmpdir"/usr/lib/tmpfiles.d/live.conf
-
-	cat > "$tmpdir"/usr/lib/systemd/system/mount-live.service <<-EOF
-		[Unit]
-		Description=Mount Live OS
-		Requires=systemd-udev-trigger.service systemd-tmpfiles.service
-		After=systemd-udev-trigger.service systemd-tmpfiles.service
-		ConditionPathExists=/etc/initrd-release
-		OnFailure=emergency.target
-		OnFailureJobMode=replace-irreversibly
-
-		[Service]
-		Type=Oneshot
-		ExecStart=/usr/bin/mount -n -r /dev/disk/by-label/ataraxialinux /run/live-os
-
-		[Install]
-		WantedBy=initrd.target
-	EOF
-	cat > "$tmpdir"/usr/lib/systemd/system/mount-squashfs.service <<-EOF
-		[Unit]
-		Description=Mount squashfs
-		Requires=mount-live.service
-		After=mount-live.service
-		ConditionPathExists=/etc/initrd-release
-		OnFailure=emergency.target
-		OnFailureJobMode=replace-irreversibly
-
-		[Service]
-		Type=Oneshot
-		ExecStart=/usr/bin/mount-squashfs
-
-		[Install]
-		WantedBy=initrd.target
-	EOF
-
 	cat > "$tmpdir"/usr/bin/mount-squashfs <<-EOF
 		#!/usr/bin/sh
 		#
@@ -341,10 +306,27 @@ main() {
 		fi
 
 		mkdir -p /newroot/squash /newroot/rw /newroot/work
-		mount -n -r -o loop -t squashfs /run/live-os/seiba.sfs /newroot/squash || exit 1
+		mount -n -r -o loop -t squashfs /run/live-os/seiba/seiba.sfs /newroot/squash || exit 1
 		mount -n -o lowerdir=/newroot/squash,upperdir=/newroot/rw,workdir=/newroot/work -t overlay overlay /sysroot || exit 1
 	EOF
 	chmod +x "$tmpdir"/usr/bin/mount-squashfs
+
+	echo 'd /run/live-os 0755 root root -' >> "$tmpdir"/usr/lib/tmpfiles.d/live.conf
+	cat > "$tmpdir"/usr/lib/systemd/system/mount-live.service <<-EOF
+		[Unit]
+		Description=Mount Live OS
+		Requires=systemd-udev-trigger.service
+		After=systemd-udev-trigger.service
+		OnFailure=emergency.target
+
+		[Service]
+		Type=Oneshot
+		ExecStartPre=/usr/bin/mount -n -r /dev/disk/by-label/ataraxialinux /run/live-os
+		ExecStart=/usr/bin/mount-squashfs
+
+		[Install]
+		WantedBy=initrd.target
+	EOF
 
 	ln -sf mksh "$tmpdir"/usr/bin/sh
 	ln -sf /usr/lib/systemd/systemd "$tmpdir"/init
@@ -373,7 +355,7 @@ main() {
 	done
 
 	for i in systemd-udevd.service systemd-udev-settle.service systemd-udev-trigger.service \
-		mount-squashfs.service; do
+		mount-live.service; do
 		systemctl -q --root "$tmpdir" add-wants initrd.target "$i"
 	done
 
