@@ -72,6 +72,7 @@ main() {
 	mkdir -p dev usr/bin usr/lib/modules usr/lib/firmware run sys proc etc/udev/rules.d sysroot
 	mkdir -p usr/lib/systemd/system usr/lib/udev/rules.d usr/lib/modules-load.d usr/lib/sysctl.d
 	mkdir -p usr/lib/systemd/system/sockets.target.wants usr/lib/systemd/system/sysinit.target.wants usr/lib/tmpfiles.d
+	mkdir -p usr/lib/modules/$kernel/kernel/drivers/usb
 	ln -sf usr/bin bin
 	ln -sf usr/bin sbin
 	ln -sf usr/lib lib
