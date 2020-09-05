@@ -69,7 +69,7 @@ main() {
 	tmpdir="$(mktemp -d)"
 
 	cd "$tmpdir"
-	mkdir -p dev usr/bin usr/lib/modules usr/lib/firmware run sys proc etc/udev/rules.d sysroot media
+	mkdir -p dev usr/bin usr/lib/modules usr/lib/firmware run sys proc etc/udev/rules.d sysroot
 	mkdir -p usr/lib/systemd/system usr/lib/udev/rules.d usr/lib/modules-load.d usr/lib/sysctl.d
 	mkdir -p usr/lib/systemd/system/sockets.target.wants usr/lib/systemd/system/sysinit.target.wants usr/lib/tmpfiles.d
 	ln -sf usr/bin bin
@@ -101,6 +101,7 @@ main() {
 		/usr/bin/mknod \
 		/usr/bin/mount \
 		/usr/bin/umount \
+		/usr/bin/mountpoint \
 		/usr/bin/sed \
 		/usr/bin/sleep \
 		/usr/bin/ln \
@@ -127,6 +128,7 @@ main() {
 		/usr/bin/journalctl \
 		/usr/bin/udevadm \
 		/usr/bin/systemd-run \
+		/usr/bin/systemd-mount \
 		/usr/bin/systemd-escape \
 		/usr/bin/systemd-cgls \
 		/usr/bin/systemd-tmpfiles \
@@ -246,6 +248,7 @@ main() {
 		/usr/bin/mknod \
 		/usr/bin/mount \
 		/usr/bin/umount \
+		/usr/bin/mountpoint \
 		/usr/bin/sed \
 		/usr/bin/sleep \
 		/usr/bin/ln \
@@ -272,6 +275,7 @@ main() {
 		/usr/bin/journalctl \
 		/usr/bin/udevadm \
 		/usr/bin/systemd-run \
+		/usr/bin/systemd-mount \
 		/usr/bin/systemd-escape \
 		/usr/bin/systemd-cgls \
 		/usr/bin/systemd-tmpfiles \
@@ -289,6 +293,57 @@ main() {
 		/usr/lib/systemd/systemd-vconsole-setup \
 		/usr/lib/systemd/systemd-volatile-root \
 		/usr/lib/systemd/systemd-sulogin-shell
+
+	echo 'd /run/live-os 0755 root root -' >> "$tmpdir"/usr/lib/tmpfiles.d/live.conf
+
+	cat > "$tmpdir"/usr/lib/systemd/system/mount-live.service <<-EOF
+		[Unit]
+		Description=Mount Live OS
+		Requires=systemd-udev-trigger.service systemd-tmpfiles.service
+		After=systemd-udev-trigger.service systemd-tmpfiles.service
+		ConditionPathExists=/etc/initrd-release
+		OnFailure=emergency.target
+		OnFailureJobMode=replace-irreversibly
+
+		[Service]
+		Type=Oneshot
+		ExecStart=/usr/bin/mount -n -r /dev/disk/by-label/ataraxialinux /run/live-os
+
+		[Install]
+		WantedBy=initrd.target
+	EOF
+	cat > "$tmpdir"/usr/lib/systemd/system/mount-squashfs.service <<-EOF
+		[Unit]
+		Description=Mount squashfs
+		Requires=mount-live.service
+		After=mount-live.service
+		ConditionPathExists=/etc/initrd-release
+		OnFailure=emergency.target
+		OnFailureJobMode=replace-irreversibly
+
+		[Service]
+		Type=Oneshot
+		ExecStart=/usr/bin/mount-squashfs
+
+		[Install]
+		WantedBy=initrd.target
+	EOF
+
+	cat > "$tmpdir"/usr/bin/mount-squashfs <<-EOF
+		#!/usr/bin/sh
+		#
+		# Some parts from Dragora GNU+Linux-Libre - https://dragora.org/
+		#
+
+		if ! mountpoint -q /run/live-os; then
+			exit 1
+		fi
+
+		mkdir -p /newroot/squash /newroot/rw /newroot/work
+		mount -n -r -o loop -t squashfs /run/live-os/seiba.sfs /newroot/squash || exit 1
+		mount -n -o lowerdir=/newroot/squash,upperdir=/newroot/rw,workdir=/newroot/work -t overlay overlay /sysroot || exit 1
+	EOF
+	chmod +x "$tmpdir"/usr/bin/mount-squashfs
 
 	ln -sf mksh "$tmpdir"/usr/bin/sh
 	ln -sf /usr/lib/systemd/systemd "$tmpdir"/init
@@ -316,7 +371,7 @@ main() {
 		systemctl -q --root "$tmpdir" add-wants "$i" systemd-vconsole-setup.service
 	done
 
-	for i in systemd-udevd.service systemd-udev-settle.service systemd-udev-trigger.service; do
+	for i in systemd-udevd.service systemd-udev-settle.service systemd-udev-trigger.service mount-squashfs.service; do
 		systemctl -q --root "$tmpdir" add-wants initrd.target "$i"
 	done
 
@@ -328,12 +383,39 @@ main() {
 
 	touch "$tmpdir"/etc/initrd-release
 	cat > "$tmpdir"/usr/lib/os-release <<- EOF
-		NAME="The first anarchy server in Minecraft"
-		VERSION="lel"
+		NAME="Live OS init"
+		VERSION="1.0"
 		ID="ataraxia"
-		VERSION_ID="lel"
-		PRETTY_NAME="The first anarchy server in Minecraft"
+		VERSION_ID="1.0"
+		PRETTY_NAME="Live OS init"
 	EOF
+	ln -sf /usr/lib/os-release "$tmpdir"/etc/os-release
+	ln -sf ../proc/mounts "$tmpdir"/etc/mtab
+
+	for kmoddir in crypto fs lib; do
+		if [ -d "$rootdir/usr/lib/modules/$kernel/kernel/$kmoddir" ]; then
+			cp -R "$rootdir"/usr/lib/modules/$kernel/kernel/$kmoddir "$tmpdir"/usr/lib/modules/$kernel/kernel
+		fi
+	done
+
+	for kmoddir in block ata md firewire scsi message pcmcia virtio thunderbolt; do
+		if [ -d "$rootdir/usr/lib/modules/$kernel/kernel/drivers/$kmoddir" ]; then
+			cp -R "$rootdir"/usr/lib/modules/$kernel/kernel/drivers/$kmoddir "$tmpdir"/usr/lib/modules/$kernel/kernel/drivers
+		fi
+	done
+
+	for kmoddir in host storage; do
+		if [ -d "$rootdir/usr/lib/modules/$kernel/kernel/drivers/usb/$kmoddir" ]; then
+			cp -R "$rootdir"/usr/lib/modules/$kernel/kernel/drivers/usb/$kmoddir "$tmpdir"/usr/lib/modules/$kernel/kernel/drivers/usb
+		fi
+	done
+
+	if [ -d "$MODULES" ]; then
+		depmod -a -b "$tmpdir"/usr $kernel
+	fi
+
+	find . | cpio -H newc -o | zstd -19 > "$output"
+	rm -rf "$tmpdir"
 }
 
 main "$@"
