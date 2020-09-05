@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/sh
 #
 
 umask 022
@@ -7,157 +7,336 @@ unalias -a
 pushd() { command pushd "$1" > /dev/null; }
 popd() { command popd "$1" > /dev/null; }
 msg() { printf "\033[1;34m::\033[0m %s\n" "$@"; }
+warn() { printf "\033[1;33m::\033[0m %s\n" "$@"; }
 die() { printf "\033[1;31m::\033[0m %s\n" "$@"; exit 1; }
 
+check_root() {
+	if [[ $EUID -ne 0 ]]; then
+		die "You must be root to run 'neko'"
+	fi
+}
+
+copyfile() {
+	[ -z "$1" ] && die "Specify file"
+
+	while [ "$1" ]; do
+		if [ ! -f "$rootdir/$1" ]; then
+			die "$1: file not found"
+		fi
+
+		if [ ! -f "$tmpdir/$1" ]; then
+			cp "$rootdir"/$1 "$tmpdir"/$1
+		fi
+		shift
+	done
+}
+
 copylib() {
-	for i in $1; do
-		j="$(${CROSS_COMPILE}objdump -p "$ROOTFS/$i" | grep NEEDED | awk '{print $2}')"
-		for ji in $j; do
-			case $ji in
-				libsystemd-shared-*.so)
-					if [ ! -f "$TMPDIR/usr/lib/systemd/$ji" ]; then
-						cp "$ROOTFS/usr/lib/systemd/$ji" "$TMPDIR"/usr/lib/systemd/$ji
-					fi
-					;;
-				*)
-					if [ ! -f "$TMPDIR/usr/lib/$ji" ]; then
-						cp "$ROOTFS/usr/lib/$ji" "$TMPDIR"/usr/lib/$ji
-					fi
-					;;
-			esac
+	[ -z "$1" ] && die "Specify file"
+
+	while [ "$1" ]; do
+		for i in $(ldd "$tmpdir"/$1 | awk '{print $3}' | sed -e 's|/lib|/usr/lib|' | sed -e 's|/usr/usr/lib|/usr/lib|'); do
+			if [ ! -f "$rootdir/$i" ]; then
+				warn "$i: file not found"
+				break
+			fi
+
+			if [ ! -f "$tmpdir/$i" ]; then
+				cp "$rootdir"/$i "$tmpdir"/$i
+			fi
 		done
+		shift
 	done
 }
 
 main() {
-	local sharedbins="cat cp dd ls mkdir mknod mount umount sed sleep ln rm uname readlink basename blkid switch_root kmod udevadm clear dmesg grep printf setsid lvm dmsetup killall sulogin swapon swapoff journalctl systemctl systemd-run systemd-escape systemd-cgls systemd-tmpfiles systemd-ask-password systemd-tty-ask-password-agent cryptsetup"
-	local staticbins="mksh ctrlaltdel halt"
-	local kmodlinks="insmod lsmod rmmod depmod modprobe modinfo"
-	local lvmlinks="lvchange lvrename lvextend lvcreate lvdisplay lvscan pvchange pvck pvcreate pvdisplay pvscan vgchange vgcreate vgscan vgrename vgck"
-	local sysdver="$(systemctl --version | grep systemd | awk '{print $2}')"
-	[ -z "$kver" ] && local kver="$(uname -r)"
+	export LC_ALL="POSIX"
 
-	msg "Creating initramfs image for $kver"
-	TOPDIR="$PWD"
-	TMPDIR="$(mktemp -d)"
+	kernel="$(uname -r)"
+	output="/boot/seiba.zst"
 
-	cd "$TMPDIR"
-	mkdir -p usr/bin usr/lib usr/lib/systemd/system usr/lib/tmpfiles.d usr/lib/sysctl.d usr/lib/firmware usr/lib/modules/$kver/kernel/drivers/usb dev proc sys tmp run \
-		etc/modprobe.d etc/udev/rules.d usr/lib/systemd/system/sysinit.target.wants usr/lib/systemd/system/sockets.target.wants
+	while getopts k:o:r: opts; do
+		case $opts in
+			k) kernel="$OPTARG" ;;
+			o) output="$OPTARG" ;;
+			r) rootdir="$(realpath $OPTARG)"; rootdir="${rootdir%/}" ;;
+		esac
+	done
+	shift $((OPTIND - 1))
 
+	check_root
+
+	tmpdir="$(mktemp -d)"
+
+	cd "$tmpdir"
+	mkdir -p dev usr/bin usr/lib/modules usr/lib/firmware run sys proc etc/udev/rules.d sysroot media
+	mkdir -p usr/lib/systemd/system usr/lib/udev/rules.d usr/lib/modules-load.d usr/lib/sysctl.d
+	mkdir -p usr/lib/systemd/system/sockets.target.wants usr/lib/systemd/system/sysinit.target.wants usr/lib/tmpfiles.d
 	ln -sf usr/bin bin
+	ln -sf usr/bin sbin
 	ln -sf usr/lib lib
 	ln -sf bin usr/sbin
 
-	cp -a "$ROOTFS"/usr/lib/udev "$TMPDIR"/usr/lib/udev
-	ln -sf /usr/lib/udev "$TMPDIR"/etc/udev
-	if [ -f "$ROOTFS/etc/udev/udev.conf" ]; then
-		cp "$ROOTFS"/etc/udev/udev.conf "$TMPDIR"/etc/udev/udev.conf
-	fi
-	cp -a "$ROOTFS"/etc/lvm "$TMPDIR"/etc
+	echo 'root:x:0:root' >> "$tmpdir"/etc/group
+	echo 'systemd-journal:x:190:' >> "$tmpdir"/etc/group
+	echo 'root:::root' >> "$tmpdir"/etc/gshadow
+	echo 'systemd-journal:::' >> "$tmpdir"/etc/gshadow
+	echo 'root:x:0:0:root:/:/usr/bin/mksh' >> "$tmpdir"/etc/passwd
+	echo 'nobody:x:99:99:nobody:/:/usr/bin/nologin' >> "$tmpdir"/etc/passwd
+	echo 'systemd-journal-gateway:x:191:191:systemd-journal-gateway:/:/usr/bin/nologin' >> "$tmpdir"/etc/passwd
+	echo 'root::14871::::::' >> "$tmpdir"/etc/shadow
+	echo 'nobody:x:14871::::::' >> "$tmpdir"/etc/shadow
 
-	for i in $sharedbins; do
-		cp "$ROOTFS"/usr/bin/$i "$TMPDIR"/usr/bin/$i
-		copylib /usr/bin/$i
+	chmod 0600 "$tmpdir"/etc/gshadow "$tmpdir"/etc/shadow
+
+	copyfile /usr/bin/mksh \
+		/usr/bin/grep \
+		/usr/bin/cat \
+		/usr/bin/cp \
+		/usr/bin/dd \
+		/usr/bin/df \
+		/usr/bin/killall \
+		/usr/bin/ls \
+		/usr/bin/mkdir \
+		/usr/bin/mknod \
+		/usr/bin/mount \
+		/usr/bin/umount \
+		/usr/bin/sed \
+		/usr/bin/sleep \
+		/usr/bin/ln \
+		/usr/bin/rm \
+		/usr/bin/uname \
+		/usr/bin/kmod \
+		/usr/bin/blkid \
+		/usr/bin/chroot \
+		/usr/bin/chown \
+		/usr/bin/flock \
+		/usr/bin/mv \
+		/usr/bin/mkfifo \
+		/usr/bin/setsid \
+		/usr/bin/findmnt \
+		/usr/bin/sulogin \
+		/usr/bin/lvm \
+		/usr/bin/dmsetup \
+		/usr/bin/dmeventd \
+		/usr/bin/less \
+		/usr/bin/more \
+		/usr/bin/swapon \
+		/usr/bin/swapoff \
+		/usr/bin/systemctl \
+		/usr/bin/journalctl \
+		/usr/bin/udevadm \
+		/usr/bin/systemd-run \
+		/usr/bin/systemd-escape \
+		/usr/bin/systemd-cgls \
+		/usr/bin/systemd-tmpfiles \
+		/usr/bin/systemd-ask-password \
+		/usr/bin/systemd-tty-ask-password-agent \
+		/usr/lib/systemd/systemd \
+		/usr/lib/systemd/systemd-cgroups-agent \
+		/usr/lib/systemd/systemd-shutdown \
+		/usr/lib/systemd/systemd-reply-password \
+		/usr/lib/systemd/systemd-fsck \
+		/usr/lib/systemd/systemd-udevd \
+		/usr/lib/systemd/systemd-journald \
+		/usr/lib/systemd/systemd-sysctl \
+		/usr/lib/systemd/systemd-modules-load \
+		/usr/lib/systemd/systemd-vconsole-setup \
+		/usr/lib/systemd/systemd-volatile-root \
+		/usr/lib/systemd/systemd-sulogin-shell \
+		/usr/lib/systemd/system/cryptsetup.target \
+		/usr/lib/systemd/system/emergency.target \
+		/usr/lib/systemd/system/emergency.service \
+		/usr/lib/systemd/system/sysinit.target \
+		/usr/lib/systemd/system/basic.target \
+		/usr/lib/systemd/system/halt.target \
+		/usr/lib/systemd/system/kexec.target \
+		/usr/lib/systemd/system/local-fs.target \
+		/usr/lib/systemd/system/local-fs-pre.target \
+		/usr/lib/systemd/system/remote-fs.target \
+		/usr/lib/systemd/system/remote-fs-pre.target \
+		/usr/lib/systemd/system/multi-user.target \
+		/usr/lib/systemd/system/network.target \
+		/usr/lib/systemd/system/network-pre.target \
+		/usr/lib/systemd/system/network-online.target \
+		/usr/lib/systemd/system/nss-lookup.target \
+		/usr/lib/systemd/system/nss-user-lookup.target \
+		/usr/lib/systemd/system/poweroff.target \
+		/usr/lib/systemd/system/reboot.target \
+		/usr/lib/systemd/system/rescue.target \
+		/usr/lib/systemd/system/rescue.service \
+		/usr/lib/systemd/system/rpcbind.target \
+		/usr/lib/systemd/system/shutdown.target \
+		/usr/lib/systemd/system/final.target \
+		/usr/lib/systemd/system/sigpwr.target \
+		/usr/lib/systemd/system/sockets.target \
+		/usr/lib/systemd/system/swap.target \
+		/usr/lib/systemd/system/timers.target \
+		/usr/lib/systemd/system/paths.target \
+		/usr/lib/systemd/system/umount.target \
+		/usr/lib/systemd/system/sys-kernel-config.mount \
+		/usr/lib/systemd/system/kmod-static-nodes.service \
+		/usr/lib/systemd/system/systemd-tmpfiles-setup.service \
+		/usr/lib/systemd/system/systemd-tmpfiles-setup-dev.service \
+		/usr/lib/systemd/system/systemd-ask-password-console.path \
+		/usr/lib/systemd/system/systemd-udevd-control.socket \
+		/usr/lib/systemd/system/systemd-udevd-kernel.socket \
+		/usr/lib/systemd/system/systemd-journald.socket \
+		/usr/lib/systemd/system/systemd-journald-audit.socket \
+		/usr/lib/systemd/system/systemd-ask-password-console.service \
+		/usr/lib/systemd/system/systemd-modules-load.service \
+		/usr/lib/systemd/system/systemd-halt.service \
+		/usr/lib/systemd/system/systemd-poweroff.service \
+		/usr/lib/systemd/system/systemd-reboot.service \
+		/usr/lib/systemd/system/systemd-kexec.service \
+		/usr/lib/systemd/system/systemd-fsck@.service \
+		/usr/lib/systemd/system/systemd-udevd.service \
+		/usr/lib/systemd/system/systemd-udev-trigger.service \
+		/usr/lib/systemd/system/systemd-udev-settle.service \
+		/usr/lib/systemd/system/systemd-journald.service \
+		/usr/lib/systemd/system/systemd-vconsole-setup.service \
+		/usr/lib/systemd/system/systemd-volatile-root.service \
+		/usr/lib/systemd/system/systemd-random-seed.service \
+		/usr/lib/systemd/system/systemd-sysctl.service \
+		/usr/lib/systemd/system/ctrl-alt-del.target \
+		/usr/lib/systemd/system/reboot.target \
+		/usr/lib/systemd/system/systemd-reboot.service \
+		/usr/lib/systemd/system/syslog.socket \
+		/usr/lib/systemd/system/slices.target \
+		/usr/lib/systemd/system/initrd.target \
+		/usr/lib/systemd/system/initrd-fs.target \
+		/usr/lib/systemd/system/initrd-root-device.target \
+		/usr/lib/systemd/system/initrd-root-fs.target \
+		/usr/lib/systemd/system/initrd-switch-root.target \
+		/usr/lib/systemd/system/initrd-switch-root.service \
+		/usr/lib/systemd/system/initrd-cleanup.service \
+		/usr/lib/systemd/system/initrd-udevadm-cleanup-db.service \
+		/usr/lib/systemd/system/initrd-parse-etc.service \
+		/usr/lib/tmpfiles.d/systemd.conf \
+		/usr/lib/sysctl.d/10-default.conf \
+		/usr/lib/sysctl.d/50-default.conf \
+		/usr/lib/udev/rules.d/10-dm.rules \
+		/usr/lib/udev/rules.d/11-dm-lvm.rules \
+		/usr/lib/udev/rules.d/13-dm-disk.rules \
+		/usr/lib/udev/rules.d/50-udev-default.rules \
+		/usr/lib/udev/rules.d/60-block.rules \
+		/usr/lib/udev/rules.d/60-cdrom_id.rules \
+		/usr/lib/udev/rules.d/60-persistent-storage.rules \
+		/usr/lib/udev/rules.d/70-uaccess.rules \
+		/usr/lib/udev/rules.d/71-seat.rules \
+		/usr/lib/udev/rules.d/73-seat-late.rules \
+		/usr/lib/udev/rules.d/75-net-description.rules \
+		/usr/lib/udev/rules.d/80-drivers.rules \
+		/usr/lib/udev/rules.d/80-net-setup-link.rules \
+		/usr/lib/udev/rules.d/90-vconsole.rules \
+		/usr/lib/udev/rules.d/95-dm-notify.rules \
+		/usr/lib/udev/rules.d/99-systemd.rules \
+		/usr/lib/udev/ata_id \
+		/usr/lib/udev/cdrom_id \
+		/usr/lib/udev/scsi_id
+	copylib /usr/bin/mksh \
+		/usr/bin/grep \
+		/usr/bin/cat \
+		/usr/bin/cp \
+		/usr/bin/dd \
+		/usr/bin/df \
+		/usr/bin/killall \
+		/usr/bin/ls \
+		/usr/bin/mkdir \
+		/usr/bin/mknod \
+		/usr/bin/mount \
+		/usr/bin/umount \
+		/usr/bin/sed \
+		/usr/bin/sleep \
+		/usr/bin/ln \
+		/usr/bin/rm \
+		/usr/bin/uname \
+		/usr/bin/kmod \
+		/usr/bin/blkid \
+		/usr/bin/chroot \
+		/usr/bin/chown \
+		/usr/bin/flock \
+		/usr/bin/mv \
+		/usr/bin/mkfifo \
+		/usr/bin/setsid \
+		/usr/bin/findmnt \
+		/usr/bin/sulogin \
+		/usr/bin/lvm \
+		/usr/bin/dmsetup \
+		/usr/bin/dmeventd \
+		/usr/bin/less \
+		/usr/bin/more \
+		/usr/bin/swapon \
+		/usr/bin/swapoff \
+		/usr/bin/systemctl \
+		/usr/bin/journalctl \
+		/usr/bin/udevadm \
+		/usr/bin/systemd-run \
+		/usr/bin/systemd-escape \
+		/usr/bin/systemd-cgls \
+		/usr/bin/systemd-tmpfiles \
+		/usr/bin/systemd-ask-password \
+		/usr/bin/systemd-tty-ask-password-agent \
+		/usr/lib/systemd/systemd \
+		/usr/lib/systemd/systemd-cgroups-agent \
+		/usr/lib/systemd/systemd-shutdown \
+		/usr/lib/systemd/systemd-reply-password \
+		/usr/lib/systemd/systemd-fsck \
+		/usr/lib/systemd/systemd-udevd \
+		/usr/lib/systemd/systemd-journald \
+		/usr/lib/systemd/systemd-sysctl \
+		/usr/lib/systemd/systemd-modules-load \
+		/usr/lib/systemd/systemd-vconsole-setup \
+		/usr/lib/systemd/systemd-volatile-root \
+		/usr/lib/systemd/systemd-sulogin-shell
+
+	ln -sf mksh "$tmpdir"/usr/bin/sh
+	ln -sf /usr/lib/systemd/systemd "$tmpdir"/init
+
+	for tool in {ins,ls,rm,dep}mod mod{probe,info}; do
+		ln -sf kmod "$tmpdir"/usr/bin/$tool
+	done
+	for tool in lvchange lvrename lvextend lvcreate lvdisplay \
+			lvscan pvchange pvck pvcreate pvdisplay pvscan \
+			vgchange vgcreate vgscan vgrename vgck; do
+		ln -sf lvm "$tmpdir"/usr/bin/$tool
 	done
 
-	cp "$ROOTFS"/usr/lib/tmpfiles.d/systemd.conf "$TMPDIR"/usr/lib/tmpfiles.d/systemd.conf
-
-	for i in cryptsetup.target emergency.target sysinit.target basic.target halt.target kexec.target local-fs.target local-fs-pre.target \
-		remote-fs.target remote-fs-pre.target multi-user.target network.target network-pre.target network-online.target nss-lookup.target \
-		nss-user-lookup.target poweroff.target reboot.target rescue.target rpcbind.target shutdown.target final.target sigpwr.target \
-		sockets.target swap.target timers.target paths.target umount.target sys-kernel-config.mount kmod-static-nodes.service \
-		systemd-tmpfiles-setup.service systemd-tmpfiles-setup-dev.service systemd-ask-password-console.path systemd-udevd-control.socket \
-		systemd-udevd-kernel.socket systemd-journald.socket systemd-journald-audit.socket systemd-ask-password-console.service \
-		systemd-modules-load.service systemd-halt.service systemd-poweroff.service systemd-reboot.service systemd-kexec.service \
-		systemd-fsck@.service systemd-udevd.service systemd-udev-trigger.service systemd-udev-settle.service systemd-journald.service \
-		systemd-vconsole-setup.service systemd-volatile-root.service systemd-random-seed.service systemd-sysctl.service \
-		sysinit.target.wants/systemd-modules-load.service sysinit.target.wants/systemd-ask-password-console.path \
-		sysinit.target.wants/systemd-journald.service sockets.target.wants/systemd-udevd-control.socket sockets.target.wants/systemd-udevd-kernel.socket \
-		sockets.target.wants/systemd-journald.socket sockets.target.wants/systemd-journald-audit.socket sockets.target.wants/systemd-journald-dev-log.socket \
-		sysinit.target.wants/systemd-udevd.service sysinit.target.wants/systemd-udev-trigger.service sysinit.target.wants/kmod-static-nodes.service \
-		sysinit.target.wants/systemd-tmpfiles-setup.service sysinit.target.wants/systemd-tmpfiles-setup-dev.service sysinit.target.wants/systemd-sysctl.service \
-		ctrl-alt-del.target reboot.target systemd-reboot.service syslog.socket slices.target initrd.target initrd-fs.target initrd-root-device.target \
-		initrd-root-fs.target initrd-switch-root.target initrd-switch-root.service initrd-cleanup.service initrd-udevadm-cleanup-db.service \
-		initrd-parse-etc.service; do
-		cp "$ROOTFS"/usr/lib/systemd/system/$i "$TMPDIR"/usr/lib/systemd/system/$i
+	for i in systemd-journald-audit.socket systemd-journald-dev-log.socket \
+		systemd-journald.socket systemd-udevd-control.socket systemd-udevd-kernel.socket; do
+		ln -sf /usr/lib/systemd/system/$i "$tmpdir"/usr/lib/systemd/system/sockets.target.wants/$i
 	done
-
-	for i in systemd systemd-cgroups-agent systemd-shutdown systemd-reply-password systemd-fsck \
-		systemd-udevd systemd-journald systemd-sysctl systemd-modules-load systemd-vconsole-setup systemd-volatile-root; do
-		cp "$ROOTFS"/usr/lib/systemd/$i "$TMPDIR"/usr/lib/systemd/$i
-		copylib /usr/lib/systemd/$i
+	for i in  kmod-static-nodes.service systemd-ask-password-console.path systemd-journald.service \
+		systemd-modules-load.service systemd-sysctl.service systemd-tmpfiles-setup-dev.service \
+		systemd-tmpfiles-setup.service systemd-udev-trigger.service systemd-udevd.service; do
+		ln -sf /usr/lib/systemd/system/$i "$tmpdir"/usr/lib/systemd/system/sysinit.target.wants/$i
 	done
 
 	for i in emergency.target rescue.target systemd-ask-password-console.service; do
-		systemctl -q --root "$TMPDIR" add-wants "$i" systemd-vconsole-setup.service
-	done
-	systemctl -q --root "$TMPDIR" set-default initrd.target
-
-	mkdir -p "$TMPDIR"/var/lib/dbus
-	ln -sf ../../../run/machine-id "$TMPDIR"/var/lib/dbus/machine-id
-	ln -sf ../run/machine-id "$TMPDIR"/etc/machine-id
-
-	for i in $staticbins; do
-		cp "$ROOTFS"/usr/bin/$i "$TMPDIR"/usr/bin/$i
+		systemctl -q --root "$tmpdir" add-wants "$i" systemd-vconsole-setup.service
 	done
 
-	for i in $busyboxlinks; do
-		ln -sf busybox "$TMPDIR"/usr/bin/$i
+	for i in systemd-udevd.service systemd-udev-settle.service systemd-udev-trigger.service; do
+		systemctl -q --root "$tmpdir" add-wants initrd.target "$i"
 	done
 
-	for i in $kmodlinks; do
-		ln -sf kmod "$TMPDIR"/usr/bin/$i
-	done
+	systemctl -q --root "$tmpdir" set-default initrd.target
 
-	for i in $lvmlinks; do
-		ln -sf lvm "$TMPDIR"/usr/bin/$i
-	done
+	mkdir -p "$tmpdir"/var/lib/dbus
+	ln -sf ../../../run/machine-id "$tmpdir"/var/lib/dbus/machine-id
+	ln -sf ../run/machine-id "$tmpdir"/etc/machine-id
 
-	ln -sf mksh "$TMPDIR"/usr/bin/sh
-
-	for kmoddir in crypto fs lib; do
-		if [ -d "$ROOTFS/usr/lib/modules/$kver/kernel/$kmoddir" ]; then
-			cp -R "$ROOTFS"/usr/lib/modules/$kver/kernel/$kmoddir "$TMPDIR"/usr/lib/modules/$kver/kernel
-		fi
-	done
-
-	for kmoddir in block ata md firewire scsi message pcmcia virtio thunderbolt; do
-		if [ -d "$ROOTFS/usr/lib/modules/$kver/kernel/drivers/$kmoddir" ]; then
-			cp -R "$ROOTFS"/usr/lib/modules/$kver/kernel/drivers/$kmoddir "$TMPDIR"/usr/lib/modules/$kver/kernel/drivers
-		fi
-	done
-
-	for kmoddir in host storage; do
-		if [ -d "$ROOTFS/usr/lib/modules/$kver/kernel/drivers/usb/$kmoddir" ]; then
-			cp -R "$ROOTFS"/usr/lib/modules/$kver/kernel/drivers/usb/$kmoddir "$TMPDIR"/usr/lib/modules/$kver/kernel/drivers/usb
-		fi
-	done
-
-	if [ -d "$MODULES" ]; then
-		depmod -a -b "$TMPDIR"/usr $kver
-	fi
-
-	ln -sf /usr/lib/systemd/systemd "$TMPDIR"/init
-
-	touch "$TMPDIR"/etc/initrd-release
-
-	for i in libargon2.so.1 libjson-c.so.4 libcap.so.2 libcap-ng.so.0 liblz4.so.1; do
-		cp "$(realpath $ROOTFS/usr/lib/$i)" "$TMPDIR"/usr/lib/$i
-	done
-
-	local linker="$(readelf -l "$TMPDIR"/usr/bin/ln | grep Requesting | awk '{print $4}' | cut -d':' -f2 | tr -d ' ]' | sed -e 's|/lib/||')"
-	ln -sf libc.so "$TMPDIR"/usr/lib/$linker
-
-	pushd "$TMPDIR"
-		find . | cpio -H newc -o | zstd -12 > /boot/seiba.zst
-	popd
-	rm -rf "$TMPDIR"
-
-	msg "Done"
+	touch "$tmpdir"/etc/initrd-release
+	cat > "$tmpdir"/usr/lib/os-release <<- EOF
+		NAME="The first anarchy server in Minecraft"
+		VERSION="lel"
+		ID="ataraxia"
+		VERSION_ID="lel"
+		PRETTY_NAME="The first anarchy server in Minecraft"
+	EOF
 }
 
-main
+main "$@"
 
 exit 0
 
