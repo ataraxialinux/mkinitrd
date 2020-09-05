@@ -297,20 +297,6 @@ main() {
 
 	echo 'd /run/live-os 0755 root root -' >> "$tmpdir"/usr/lib/tmpfiles.d/live.conf
 
-	cat > "$tmpdir"/usr/lib/systemd/system/update-kmods.service <<-EOF
-		[Unit]
-		Description=Update Kernel Modules
-		Before=kmod-static-nodes.service
-		OnFailure=emergency.target
-		OnFailureJobMode=replace-irreversibly
-
-		[Service]
-		Type=Oneshot
-		ExecStart=/usr/bin/depmod -a
-
-		[Install]
-		WantedBy=initrd.target
-	EOF
 	cat > "$tmpdir"/usr/lib/systemd/system/mount-live.service <<-EOF
 		[Unit]
 		Description=Mount Live OS
@@ -387,7 +373,7 @@ main() {
 	done
 
 	for i in systemd-udevd.service systemd-udev-settle.service systemd-udev-trigger.service \
-		mount-squashfs.service update-kmods.service; do
+		mount-squashfs.service; do
 		systemctl -q --root "$tmpdir" add-wants initrd.target "$i"
 	done
 
@@ -425,6 +411,9 @@ main() {
 			cp -R "$rootdir"/usr/lib/modules/$kernel/kernel/drivers/usb/$kmoddir "$tmpdir"/usr/lib/modules/$kernel/kernel/drivers/usb
 		fi
 	done
+
+	touch "$tmpdir"/usr/lib/modules/$kernel/modules.order "$tmpdir"/usr/lib/modules/$kernel/modules.builtin
+	depmod -a -b "$tmpdir"/usr $kernel
 
 	find . | cpio -H newc -o | zstd -19 > "$output"
 	rm -rf "$tmpdir"
