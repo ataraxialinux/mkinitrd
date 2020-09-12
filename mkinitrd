@@ -69,7 +69,7 @@ main() {
 	tmpdir="$(mktemp -d)"
 
 	cd "$tmpdir"
-	mkdir -p dev usr/bin usr/lib/modules usr/lib/firmware run sys proc etc/udev/rules.d sysroot
+	mkdir -p dev usr/bin usr/lib/modules usr/lib/firmware run sys proc etc/udev/rules.d sysroot work
 	mkdir -p usr/lib/systemd/system usr/lib/udev/rules.d usr/lib/modules-load.d usr/lib/sysctl.d
 	mkdir -p usr/lib/systemd/system/sockets.target.wants usr/lib/systemd/system/sysinit.target.wants usr/lib/tmpfiles.d
 	mkdir -p usr/lib/modules/$kernel/kernel/drivers/usb
@@ -304,10 +304,13 @@ main() {
 		if ! mountpoint -q /run/live-os; then
 			exit 1
 		fi
+		if ! mountpoint -q /work; then
+			mount -t tmpfs tmpfs -o rw,size=100% /work || rescue_shell
+		fi
 
-		mkdir -p /newroot/squash /newroot/rw /newroot/work
-		mount -n -r -o loop -t squashfs /run/live-os/seiba/seiba.sfs /newroot/squash || exit 1
-		mount -n -o lowerdir=/newroot/squash,upperdir=/newroot/rw,workdir=/newroot/work -t overlay overlay /sysroot || exit 1
+		mkdir -p /work/squash /work/rw /work/work
+		mount -n -r -o loop -t squashfs /run/live-os/seiba/seiba.sfs /work/squash || exit 1
+		mount -n -o lowerdir=/work/squash,upperdir=/work/rw,workdir=/work/work -t overlay overlay /sysroot || exit 1
 	EOF
 	chmod +x "$tmpdir"/usr/bin/mount-squashfs
 
