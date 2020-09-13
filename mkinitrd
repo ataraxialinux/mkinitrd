@@ -301,6 +301,8 @@ main() {
 		# Some parts from Dragora GNU+Linux-Libre - https://dragora.org/
 		#
 
+		set -e
+
 		if ! mountpoint -q /run/live-os; then
 			exit 1
 		fi
@@ -309,8 +311,12 @@ main() {
 		fi
 
 		mkdir -p /work/squash /work/rw /work/work
-		mount -n -r -o loop -t squashfs /run/live-os/seiba/seiba.sfs /work/squash || exit 1
-		mount -n -o lowerdir=/work/squash,upperdir=/work/rw,workdir=/work/work -t overlay overlay /sysroot || exit 1
+		if ! mountpoint -q /work/squash; then
+			mount -n -r -o loop -t squashfs /run/live-os/seiba/seiba.sfs /work/squash || exit 1
+		fi
+		if ! mountpoint -q /sysroot; then
+			mount -n -o lowerdir=/work/squash,upperdir=/work/rw,workdir=/work/work -t overlay overlay /sysroot || exit 1
+		fi
 	EOF
 	chmod +x "$tmpdir"/usr/bin/mount-squashfs
 
@@ -318,14 +324,19 @@ main() {
 	cat > "$tmpdir"/usr/lib/systemd/system/mount-live.service <<-EOF
 		[Unit]
 		Description=Mount Live OS
+		StartLimitIntervalSec=500
+		StartLimitBurst=5
 		Requires=systemd-udev-trigger.service
 		After=systemd-udev-trigger.service
+		Before=initrd-root-fs.target
 		OnFailure=emergency.target
 
 		[Service]
 		Type=Oneshot
 		ExecStartPre=/usr/bin/mount -n -r /dev/disk/by-label/ataraxialinux /run/live-os
 		ExecStart=/usr/bin/mount-squashfs
+		Restart=on-failure
+		RestartSec=10s
 
 		[Install]
 		WantedBy=initrd.target
@@ -362,6 +373,7 @@ main() {
 		systemctl -q --root "$tmpdir" add-wants initrd.target "$i"
 	done
 
+	systemctl -q --root "$tmpdir" add-wants initrd-root-fs.target mount-live.service
 	systemctl -q --root "$tmpdir" set-default initrd.target
 
 	mkdir -p "$tmpdir"/var/lib/dbus
