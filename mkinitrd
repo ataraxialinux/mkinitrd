@@ -335,6 +335,7 @@ main() {
 		Type=Oneshot
 		ExecStartPre=/usr/bin/mount -n -r /dev/disk/by-label/ataraxialinux /run/live-os
 		ExecStart=/usr/bin/mount-squashfs
+		ExecStartPost=/usr/bin/ln -sf /run/live-os /run/mount/live-os
 		Restart=on-failure
 		RestartSec=10s
 
