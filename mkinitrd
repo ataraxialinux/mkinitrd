@@ -125,6 +125,8 @@ main() {
 		/usr/bin/more \
 		/usr/bin/swapon \
 		/usr/bin/swapoff \
+		/usr/bin/checkisomd5 \
+		/usr/bin/findfs \
 		/usr/bin/systemctl \
 		/usr/bin/journalctl \
 		/usr/bin/udevadm \
@@ -272,6 +274,8 @@ main() {
 		/usr/bin/more \
 		/usr/bin/swapon \
 		/usr/bin/swapoff \
+		/usr/bin/checkisomd5 \
+		/usr/bin/findfs \
 		/usr/bin/systemctl \
 		/usr/bin/journalctl \
 		/usr/bin/udevadm \
@@ -321,9 +325,10 @@ main() {
 	chmod +x "$tmpdir"/usr/bin/mount-squashfs
 
 	echo 'd /run/live-os 0755 root root -' >> "$tmpdir"/usr/lib/tmpfiles.d/live.conf
-	cat > "$tmpdir"/usr/lib/systemd/system/mount-live.service <<-EOF
+
+	cat > "$tmpdir"/usr/lib/systemd/system/mount-image.service <<-EOF
 		[Unit]
-		Description=Mount Live OS
+		Description=Mount Live Image
 		StartLimitIntervalSec=500
 		StartLimitBurst=5
 		Requires=systemd-udev-trigger.service
@@ -333,7 +338,44 @@ main() {
 
 		[Service]
 		Type=Oneshot
-		ExecStartPre=/usr/bin/mount -n -r /dev/disk/by-label/ataraxialinux /run/live-os
+		ExecStart=/usr/bin/mount -n -r /dev/disk/by-label/ataraxialinux /run/live-os
+		Restart=on-failure
+		RestartSec=10s
+
+		[Install]
+		WantedBy=initrd.target
+	EOF
+	cat > "$tmpdir"/usr/lib/systemd/system/check-image-md5.service <<-EOF
+		[Unit]
+		Description=Check Live OS MD5
+		StartLimitIntervalSec=500
+		StartLimitBurst=5
+		Requires=mount-image.service systemd-udev-trigger.service
+		After=systemd-udev-trigger.service mount-image.service
+		Before=initrd-root-fs.target
+		OnFailure=emergency.target
+
+		[Service]
+		Type=Oneshot
+		ExecStart=/usr/bin/checkisomd5 --verbose $(findfs LABEL=ataraxialinux)
+		Restart=on-failure
+		RestartSec=10s
+
+		[Install]
+		WantedBy=initrd.target
+	EOF
+	cat > "$tmpdir"/usr/lib/systemd/system/mount-live.service <<-EOF
+		[Unit]
+		Description=Mount Live OS
+		StartLimitIntervalSec=500
+		StartLimitBurst=5
+		Requires=mount-image.service check-image-md5.service systemd-udev-trigger.service
+		After=systemd-udev-trigger.service mount-image.service check-image-md5.service
+		Before=initrd-root-fs.target
+		OnFailure=emergency.target
+
+		[Service]
+		Type=Oneshot
 		ExecStart=/usr/bin/mount-squashfs
 		ExecStartPost=/usr/bin/ln -sf /run/live-os /run/mount/live-os
 		Restart=on-failure
@@ -374,6 +416,8 @@ main() {
 		systemctl -q --root "$tmpdir" add-wants initrd.target "$i"
 	done
 
+	systemctl -q --root "$tmpdir" add-wants initrd-root-fs.target mount-image.service
+	systemctl -q --root "$tmpdir" add-wants initrd-root-fs.target check-image-md5.service
 	systemctl -q --root "$tmpdir" add-wants initrd-root-fs.target mount-live.service
 	systemctl -q --root "$tmpdir" set-default initrd.target
 
